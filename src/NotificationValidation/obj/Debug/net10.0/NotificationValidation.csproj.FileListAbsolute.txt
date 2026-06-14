@@ -1,0 +1,12 @@
+D:\Github Repos\notification-api-functions-actions-infra\src\NotificationValidation\bin\Debug\net10.0\NotificationValidation.deps.json
+D:\Github Repos\notification-api-functions-actions-infra\src\NotificationValidation\bin\Debug\net10.0\NotificationValidation.dll
+D:\Github Repos\notification-api-functions-actions-infra\src\NotificationValidation\bin\Debug\net10.0\NotificationValidation.pdb
+D:\Github Repos\notification-api-functions-actions-infra\src\NotificationValidation\obj\Debug\net10.0\NotificationValidation.GeneratedMSBuildEditorConfig.editorconfig
+D:\Github Repos\notification-api-functions-actions-infra\src\NotificationValidation\obj\Debug\net10.0\NotificationValidation.AssemblyInfoInputs.cache
+D:\Github Repos\notification-api-functions-actions-infra\src\NotificationValidation\obj\Debug\net10.0\NotificationValidation.AssemblyInfo.cs
+D:\Github Repos\notification-api-functions-actions-infra\src\NotificationValidation\obj\Debug\net10.0\NotificationValidation.csproj.CoreCompileInputs.cache
+D:\Github Repos\notification-api-functions-actions-infra\src\NotificationValidation\obj\Debug\net10.0\NotificationValidation.sourcelink.json
+D:\Github Repos\notification-api-functions-actions-infra\src\NotificationValidation\obj\Debug\net10.0\NotificationValidation.dll
+D:\Github Repos\notification-api-functions-actions-infra\src\NotificationValidation\obj\Debug\net10.0\refint\NotificationValidation.dll
+D:\Github Repos\notification-api-functions-actions-infra\src\NotificationValidation\obj\Debug\net10.0\NotificationValidation.pdb
+D:\Github Repos\notification-api-functions-actions-infra\src\NotificationValidation\obj\Debug\net10.0\ref\NotificationValidation.dll
