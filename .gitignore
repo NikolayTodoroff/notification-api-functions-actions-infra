@@ -18,3 +18,9 @@ override.tf.json
 
 *.auto.tfvars
 terraform.tfvars
+local.settings.json
+*.log
+
+*.funcignore
+*.user
+*.suo
