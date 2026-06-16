@@ -2,23 +2,28 @@ changelog:
   exclude:
     labels:
       - ignore-for-release
+
   categories:
-    - title: Features
+    - title: 🚀 Features
       labels:
         - feature
         - enhancement
-    - title: Bug Fixes
+
+    - title: 🐛 Bug Fixes
       labels:
         - bug
         - fix
-    - title: Infrastructure
+
+    - title: 🏗️ Infrastructure
       labels:
         - infrastructure
         - terraform
-    - title: CI/CD
+
+    - title: 🔧 CI/CD
       labels:
         - ci
         - pipeline
-    - title: Other Changes
+
+    - title: 📦 Other Changes
       labels:
         - "*"
