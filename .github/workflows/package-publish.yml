@@ -33,10 +33,10 @@ jobs:
           echo "Version: $tag"
 
       - name: Restore
-        run: dotnet restore
+        run: dotnet restore tests/NotificationValidation.Tests/NotificationValidation.Tests.csproj
 
       - name: Test
-        run: dotnet test --configuration Release
+        run: dotnet test tests/NotificationValidation.Tests/NotificationValidation.Tests.csproj --configuration Release
 
       - name: Pack
         run: |
