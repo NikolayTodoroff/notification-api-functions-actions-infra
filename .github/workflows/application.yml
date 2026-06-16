@@ -1,7 +1,7 @@
 name: Application
 
 concurrency:
-  group: aca-application-${{ github.ref }}
+  group: notification-api-${{ github.ref }}
   cancel-in-progress: false
 
 on:
@@ -9,366 +9,199 @@ on:
     branches:
       - main
     paths:
-      - 'app/**'
+      - 'src/**'
+      - 'tests/**'
       - '.github/workflows/application.yml'
   workflow_dispatch:
 
 jobs:
-  build:
-    name: Build and Scan
+  build-and-test:
+    name: Build, Test, and Scan
     runs-on: ubuntu-latest
-    environment: dev
     permissions:
-      id-token: write
       contents: read
+      packages: read
       security-events: write
 
     env:
-      ACR_SERVER: acrnginxacadev.azurecr.io
-      IMAGE_NAME: nginx-aca/web
-
-    outputs:
-      image_tag: ${{ steps.image_tag.outputs.tag }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Generate image tag
-        id: image_tag
-        run: echo "tag=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
-
-      - name: Azure Login (OIDC)
-        uses: azure/login@v3
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          dotnet-version: '8.0.x'
 
-      - name: Login to dev ACR
-        run: az acr login --name acrnginxacadev
-
-      - name: Build Docker image
-        run: |
-          docker build \
-            -t $ACR_SERVER/$IMAGE_NAME:${{ steps.image_tag.outputs.tag }} \
-            -t $ACR_SERVER/$IMAGE_NAME:latest \
-            app/
-
-      - name: Trivy scan
-        uses: aquasecurity/trivy-action@master
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
         with:
-          image-ref: acrnginxacadev.azurecr.io/nginx-aca/web:${{ steps.image_tag.outputs.tag }}
-          format: sarif
-          output: trivy.sarif
-          severity: CRITICAL,HIGH
-          exit-code: 0
+          languages: csharp
 
-      - name: Upload Trivy SARIF
-        uses: github/codeql-action/upload-sarif@v4
-        if: always()
-        with:
-          sarif_file: trivy.sarif
+      - name: Restore
+        run: dotnet restore
 
-      - name: Push Docker image to dev ACR
-        run: |
-          docker push $ACR_SERVER/$IMAGE_NAME:${{ steps.image_tag.outputs.tag }}
-          docker push $ACR_SERVER/$IMAGE_NAME:latest
+      - name: Build
+        run: dotnet build --no-restore --configuration Release
+
+      - name: Test
+        run: dotnet test --no-build --configuration Release
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
 
   deploy-dev:
     name: Deploy — dev
-    needs: build
+    needs: build-and-test
     runs-on: ubuntu-latest
     environment: dev
     permissions:
       id-token: write
       contents: read
+      packages: read
 
     env:
-      APP_NAME: ca-nginx-aca-dev
-      RESOURCE_GROUP: rg-main-nginx-aca-dev
-      ACR_SERVER: acrnginxacadev.azurecr.io
-      IMAGE_NAME: nginx-aca/web
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      FUNCTION_APP_NAME: func-notif-api-dev
+      RESOURCE_GROUP: rg-main-notif-api-dev
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Publish
+        run: |
+          dotnet publish src/NotificationApi/NotificationApi.csproj \
+            --configuration Release \
+            --output ./publish
+
+      - name: Zip artifact
+        run: |
+          cd publish
+          zip -r ../function.zip .
+
       - name: Azure Login (OIDC)
-        uses: azure/login@v3
+        uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Capture current active revision
-        id: previous_revision
+      - name: Deploy to Function App
+        uses: Azure/functions-action@v1
+        with:
+          app-name: ${{ env.FUNCTION_APP_NAME }}
+          package: function.zip
+
+      - name: Get function key
+        id: function_key
         run: |
-          previous=$(az containerapp revision list \
-            --name $APP_NAME \
+          key=$(az functionapp function keys list \
+            --name $FUNCTION_APP_NAME \
             --resource-group $RESOURCE_GROUP \
-            --query "[?properties.trafficWeight > \`0\`].name" -o tsv | head -n1)
-          echo "name=$previous" >> $GITHUB_OUTPUT
-          echo "Previous active revision: $previous"
+            --function-name PostNotification \
+            --query "default" -o tsv)
+          echo "function_key=$key" >> $GITHUB_OUTPUT
 
-      - name: Configure ACR registry on Container App
+      - name: Wait for deployment to warm up
+        run: sleep 30
+
+      - name: Smoke test
         run: |
-          az containerapp registry set \
-            --name $APP_NAME \
-            --resource-group $RESOURCE_GROUP \
-            --server $ACR_SERVER \
-            --identity system
+          response=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            "https://${FUNCTION_APP_NAME}.azurewebsites.net/api/notifications?code=${{ steps.function_key.outputs.function_key }}" \
+            -H "Content-Type: application/json" \
+            -d '{"recipient":"test@example.com","channel":"email","message":"Smoke test"}')
 
-      - name: Deploy new revision
-        run: |
-          az containerapp update \
-            --name $APP_NAME \
-            --resource-group $RESOURCE_GROUP \
-            --image $ACR_SERVER/$IMAGE_NAME:${{ needs.build.outputs.image_tag }} \
-            --revision-suffix ${{ needs.build.outputs.image_tag }}
-
-      - name: Get latest revision name
-        id: latest_revision
-        run: |
-          revision=$(az containerapp show \
-            --name $APP_NAME \
-            --resource-group $RESOURCE_GROUP \
-            --query "properties.latestRevisionName" -o tsv)
-          echo "name=$revision" >> $GITHUB_OUTPUT
-          echo "Latest revision: $revision"
-
-      - name: Get new revision FQDN
-        id: revision_fqdn
-        run: |
-          fqdn=$(az containerapp revision show \
-            --name $APP_NAME \
-            --resource-group $RESOURCE_GROUP \
-            --revision ${{ steps.latest_revision.outputs.name }} \
-            --query "properties.fqdn" -o tsv)
-          echo "fqdn=$fqdn" >> $GITHUB_OUTPUT
-
-      - name: Wait for revision to start
-        run: sleep 60
-
-      - name: Smoke test new revision
-        run: |
-          url="https://${{ steps.revision_fqdn.outputs.fqdn }}"
-          echo "Testing $url"
-          for i in {1..10}; do
-            status=$(curl -s -o /dev/null -w "%{http_code}" "$url")
-            if [ "$status" = "200" ]; then
-              echo "Smoke test passed — HTTP $status"
-              exit 0
-            fi
-            echo "Attempt $i — HTTP $status, retrying in 30s"
-            sleep 30
-          done
-          echo "Smoke test failed after 10 attempts"
-          exit 1
-
-      - name: Shift 20% traffic to new revision (canary)
-        run: |
-          new_revision="${{ steps.latest_revision.outputs.name }}"
-          previous_revision="${{ steps.previous_revision.outputs.name }}"
-
-          if [ -z "$previous_revision" ]; then
-            echo "No previous revision found — first deployment, sending 100% traffic to new revision"
-            az containerapp ingress traffic set \
-              --name $APP_NAME \
-              --resource-group $RESOURCE_GROUP \
-              --revision-weight "${new_revision}=100"
-          else
-            echo "Canary: 20% to $new_revision, 80% to $previous_revision"
-            az containerapp ingress traffic set \
-              --name $APP_NAME \
-              --resource-group $RESOURCE_GROUP \
-              --revision-weight "${new_revision}=20" "${previous_revision}=80"
+          if [ "$response" -ne 200 ]; then
+            echo "Smoke test failed with status $response"
+            exit 1
           fi
-
-      - name: Smoke test at canary traffic (20%)
-        run: |
-          url="https://$(az containerapp show \
-            --name $APP_NAME \
-            --resource-group $RESOURCE_GROUP \
-            --query "properties.configuration.ingress.fqdn" -o tsv)"
-          echo "Testing $url"
-          for i in {1..5}; do
-            status=$(curl -s -o /dev/null -w "%{http_code}" "$url")
-            if [ "$status" = "200" ]; then
-              echo "Canary smoke test passed — HTTP $status"
-              exit 0
-            fi
-            echo "Attempt $i — HTTP $status, retrying in 15s"
-            sleep 15
-          done
-          echo "Canary smoke test failed after 5 attempts"
-          exit 1
-
-      - name: Promote new revision to 100%
-        run: |
-          new_revision="${{ steps.latest_revision.outputs.name }}"
-          az containerapp ingress traffic set \
-            --name $APP_NAME \
-            --resource-group $RESOURCE_GROUP \
-            --revision-weight "${new_revision}=100"
-
-  promote:
-    name: Promote image to prod ACR
-    needs: [build, deploy-dev]
-    runs-on: ubuntu-latest
-    environment: dev
-    permissions:
-      id-token: write
-      contents: read
-
-    env:
-      SOURCE_ACR: acrnginxacadev.azurecr.io
-      TARGET_ACR: acrnginxacaprod
-      IMAGE_NAME: nginx-aca/web
-
-    steps:
-      - name: Azure Login (OIDC)
-        uses: azure/login@v3
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Import image from dev ACR to prod ACR
-        run: |
-          az acr import \
-            --name $TARGET_ACR \
-            --source $SOURCE_ACR/$IMAGE_NAME:${{ needs.build.outputs.image_tag }} \
-            --image $IMAGE_NAME:${{ needs.build.outputs.image_tag }} \
-            --force
+          echo "Smoke test passed (200)"      
 
   deploy-prod:
     name: Deploy — prod
-    needs: [build, promote]
+    needs: deploy-dev
     runs-on: ubuntu-latest
     environment: prod
     permissions:
       id-token: write
       contents: read
+      packages: read
 
     env:
-      APP_NAME: ca-nginx-aca-prod
-      RESOURCE_GROUP: rg-main-nginx-aca-prod
-      ACR_SERVER: acrnginxacaprod.azurecr.io
-      IMAGE_NAME: nginx-aca/web
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      FUNCTION_APP_NAME: func-notif-api-prod
+      RESOURCE_GROUP: rg-main-notif-api-prod
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Publish
+        run: |
+          dotnet publish src/NotificationApi/NotificationApi.csproj \
+            --configuration Release \
+            --output ./publish
+
+      - name: Zip artifact
+        run: |
+          cd publish
+          zip -r ../function.zip .
+
       - name: Azure Login (OIDC)
-        uses: azure/login@v3
+        uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Capture current active revision
-        id: previous_revision
+      - name: Deploy to Function App
+        uses: Azure/functions-action@v1
+        with:
+          app-name: ${{ env.FUNCTION_APP_NAME }}
+          package: function.zip
+
+      - name: Get function key
+        id: function_key
         run: |
-          previous=$(az containerapp revision list \
-            --name $APP_NAME \
+          key=$(az functionapp function keys list \
+            --name $FUNCTION_APP_NAME \
             --resource-group $RESOURCE_GROUP \
-            --query "[?properties.trafficWeight > \`0\`].name" -o tsv | head -n1)
-          echo "name=$previous" >> $GITHUB_OUTPUT
-          echo "Previous active revision: $previous"
+            --function-name PostNotification \
+            --query "default" -o tsv)
+          echo "function_key=$key" >> $GITHUB_OUTPUT
 
-      - name: Configure ACR registry on Container App
+      - name: Wait for deployment to warm up
+        run: sleep 30
+
+      - name: Smoke test
         run: |
-          az containerapp registry set \
-            --name $APP_NAME \
-            --resource-group $RESOURCE_GROUP \
-            --server $ACR_SERVER \
-            --identity system
+          response=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            "https://${FUNCTION_APP_NAME}.azurewebsites.net/api/notifications?code=${{ steps.function_key.outputs.function_key }}" \
+            -H "Content-Type: application/json" \
+            -d '{"recipient":"test@example.com","channel":"email","message":"Smoke test"}')
 
-      - name: Deploy new revision
-        run: |
-          az containerapp update \
-            --name $APP_NAME \
-            --resource-group $RESOURCE_GROUP \
-            --image $ACR_SERVER/$IMAGE_NAME:${{ needs.build.outputs.image_tag }} \
-            --revision-suffix ${{ needs.build.outputs.image_tag }}
-
-      - name: Get latest revision name
-        id: latest_revision
-        run: |
-          revision=$(az containerapp show \
-            --name $APP_NAME \
-            --resource-group $RESOURCE_GROUP \
-            --query "properties.latestRevisionName" -o tsv)
-          echo "name=$revision" >> $GITHUB_OUTPUT
-          echo "Latest revision: $revision"
-
-      - name: Get new revision FQDN
-        id: revision_fqdn
-        run: |
-          fqdn=$(az containerapp revision show \
-            --name $APP_NAME \
-            --resource-group $RESOURCE_GROUP \
-            --revision ${{ steps.latest_revision.outputs.name }} \
-            --query "properties.fqdn" -o tsv)
-          echo "fqdn=$fqdn" >> $GITHUB_OUTPUT
-
-      - name: Wait for revision to start
-        run: sleep 60
-
-      - name: Smoke test new revision
-        run: |
-          url="https://${{ steps.revision_fqdn.outputs.fqdn }}"
-          echo "Testing $url"
-          for i in {1..10}; do
-            status=$(curl -s -o /dev/null -w "%{http_code}" "$url")
-            if [ "$status" = "200" ]; then
-              echo "Smoke test passed — HTTP $status"
-              exit 0
-            fi
-            echo "Attempt $i — HTTP $status, retrying in 30s"
-            sleep 30
-          done
-          echo "Smoke test failed after 10 attempts"
-          exit 1
-
-      - name: Shift 20% traffic to new revision (canary)
-        run: |
-          new_revision="${{ steps.latest_revision.outputs.name }}"
-          previous_revision="${{ steps.previous_revision.outputs.name }}"
-
-          if [ -z "$previous_revision" ]; then
-            echo "No previous revision found — first deployment, sending 100% traffic to new revision"
-            az containerapp ingress traffic set \
-              --name $APP_NAME \
-              --resource-group $RESOURCE_GROUP \
-              --revision-weight "${new_revision}=100"
-          else
-            echo "Canary: 20% to $new_revision, 80% to $previous_revision"
-            az containerapp ingress traffic set \
-              --name $APP_NAME \
-              --resource-group $RESOURCE_GROUP \
-              --revision-weight "${new_revision}=20" "${previous_revision}=80"
+          if [ "$response" -ne 200 ]; then
+            echo "Smoke test failed with status $response"
+            exit 1
           fi
-
-      - name: Smoke test at canary traffic (20%)
-        run: |
-          url="https://$(az containerapp show \
-            --name $APP_NAME \
-            --resource-group $RESOURCE_GROUP \
-            --query "properties.configuration.ingress.fqdn" -o tsv)"
-          echo "Testing $url"
-          for i in {1..5}; do
-            status=$(curl -s -o /dev/null -w "%{http_code}" "$url")
-            if [ "$status" = "200" ]; then
-              echo "Canary smoke test passed — HTTP $status"
-              exit 0
-            fi
-            echo "Attempt $i — HTTP $status, retrying in 15s"
-            sleep 15
-          done
-          echo "Canary smoke test failed after 5 attempts"
-          exit 1
-
-      - name: Promote new revision to 100%
-        run: |
-          new_revision="${{ steps.latest_revision.outputs.name }}"
-          az containerapp ingress traffic set \
-            --name $APP_NAME \
-            --resource-group $RESOURCE_GROUP \
-            --revision-weight "${new_revision}=100"
+          echo "Smoke test passed (200)"        
