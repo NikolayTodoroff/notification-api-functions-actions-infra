@@ -97,6 +97,11 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Verify identity
+        run: |
+          echo "Verifying Azure identity..."
+          az account show
+
       - name: Deploy to Function App
         uses: Azure/functions-action@v1
         with:
