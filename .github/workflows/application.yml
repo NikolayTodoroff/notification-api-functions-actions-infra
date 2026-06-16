@@ -106,11 +106,26 @@ jobs:
       - name: Get function key
         id: function_key
         run: |
-          az functionapp function keys list \
-            --name $FUNCTION_APP_NAME \
-            --resource-group $RESOURCE_GROUP \
-            --function-name PostNotification \
-            --query "default" -o tsv
+          echo "Listing functions..."
+          az functionapp function list \
+            --name "$FUNCTION_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query "[].name" -o table
+
+          echo "Getting function key..."
+          key=$(az functionapp function keys list \
+            --name "$FUNCTION_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --function-name "PostNotification" \
+            --query "default" -o tsv)
+
+          if [ -z "$key" ]; then
+            echo "Function key is empty"
+            exit 1
+          fi
+
+          echo "::add-mask::$key"
+          echo "key=$key" >> "$GITHUB_OUTPUT"
 
       - name: Wait for deployment to warm up
         run: sleep 30
@@ -126,7 +141,7 @@ jobs:
             echo "Smoke test failed with status $response"
             exit 1
           fi
-          echo "Smoke test passed (200)"      
+          echo "Smoke test passed (200)"
 
   deploy-prod:
     name: Deploy — prod
