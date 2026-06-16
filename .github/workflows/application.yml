@@ -106,14 +106,22 @@ jobs:
       - name: Get function key
         id: function_key
         run: |
-          key=$(az functionapp function keys list \
-            --name $FUNCTION_APP_NAME \
-            --resource-group $RESOURCE_GROUP \
-            --function-name PostNotification \
-            --query "default" -o tsv)
-          echo "Key length: ${#key}"
-          echo "Key value (masked): ${key:0:5}..."  
-          echo "function_key=$key" >> $GITHUB_OUTPUT
+          for i in {1..10}; do
+            key=$(az functionapp function keys list \
+              --name $FUNCTION_APP_NAME \
+              --resource-group $RESOURCE_GROUP \
+              --function-name PostNotification \
+              --query "default" -o tsv)
+            if [ -n "$key" ]; then
+              echo "Function key found!"
+              echo "function_key=$key" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+            echo "Key not ready yet... retrying in 5s"
+            sleep 5
+          done
+          echo "Failed to retrieve function key after multiple attempts"
+          exit 1
 
       - name: Wait for deployment to warm up
         run: sleep 30
@@ -185,12 +193,22 @@ jobs:
       - name: Get function key
         id: function_key
         run: |
-          key=$(az functionapp function keys list \
-            --name $FUNCTION_APP_NAME \
-            --resource-group $RESOURCE_GROUP \
-            --function-name PostNotification \
-            --query "default" -o tsv)
-          echo "function_key=$key" >> $GITHUB_OUTPUT
+          for i in {1..10}; do
+            key=$(az functionapp function keys list \
+              --name $FUNCTION_APP_NAME \
+              --resource-group $RESOURCE_GROUP \
+              --function-name PostNotification \
+              --query "default" -o tsv)
+            if [ -n "$key" ]; then
+              echo "Function key found!"
+              echo "function_key=$key" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+            echo "Key not ready yet... retrying in 5s"
+            sleep 5
+          done
+          echo "Failed to retrieve function key after multiple attempts"
+          exit 1
 
       - name: Wait for deployment to warm up
         run: sleep 30
