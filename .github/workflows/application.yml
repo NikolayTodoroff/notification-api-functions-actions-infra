@@ -121,7 +121,7 @@ jobs:
             --name "$FUNCTION_APP_NAME" \
             --resource-group "$RESOURCE_GROUP" \
             --function-name "PostNotification" \
-            --query "smoke-test" -o tsv)
+            --query "[\"smoke-test\"]" -o tsv)
 
           if [ -z "$key" ]; then
             echo "Function key is empty"
@@ -129,7 +129,7 @@ jobs:
           fi
 
           echo "::add-mask::$key"
-          echo "key=$key" >> "$GITHUB_OUTPUT"  
+          echo "key=$key" >> "$GITHUB_OUTPUT"
 
       - name: Smoke test
         run: |
