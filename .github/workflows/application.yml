@@ -103,24 +103,21 @@ jobs:
           app-name: ${{ env.FUNCTION_APP_NAME }}
           package: function.zip
 
-      - name: Get host key
+      - name: Create function key
         id: function_key
         run: |
-          for i in {1..10}; do
-            key=$(az functionapp keys list \
-              --name "$FUNCTION_APP_NAME" \
-              --resource-group "$RESOURCE_GROUP" \
-              --query "functionKeys.default" -o tsv)
-            if [ -n "$key" ]; then
-              echo "::add-mask::$key"
-              echo "key=$key" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            echo "Key not ready yet... retrying in 5s"
-            sleep 5
-          done
-          echo "Failed to retrieve host key after multiple attempts"
-          exit 1
+          key=$(az functionapp function keys set \
+            --name "$FUNCTION_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --function-name "PostNotification" \
+            --key-name "smoke-test" \
+            --query "value" -o tsv)
+          if [ -z "$key" ]; then
+            echo "Function key was not created"
+            exit 1
+          fi
+          echo "::add-mask::$key"
+          echo "key=$key" >> "$GITHUB_OUTPUT"
 
       - name: Wait for deployment to warm up
         run: sleep 30
@@ -136,6 +133,7 @@ jobs:
             echo "Smoke test failed with status $response"
             exit 1
           fi
+
           echo "Smoke test passed (200)"
 
   deploy-prod:
