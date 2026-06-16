@@ -111,6 +111,8 @@ jobs:
             --resource-group $RESOURCE_GROUP \
             --function-name PostNotification \
             --query "default" -o tsv)
+          echo "Key length: ${#key}"
+          echo "Key value (masked): ${key:0:5}..."  
           echo "function_key=$key" >> $GITHUB_OUTPUT
 
       - name: Wait for deployment to warm up
