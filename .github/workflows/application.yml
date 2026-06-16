@@ -104,23 +104,32 @@ jobs:
           package: function.zip
 
       - name: Create function key
-        id: function_key
         run: |
-          key=$(az functionapp function keys set \
+          az functionapp function keys set \
             --name "$FUNCTION_APP_NAME" \
             --resource-group "$RESOURCE_GROUP" \
             --function-name "PostNotification" \
-            --key-name "smoke-test" \
-            --query "value" -o tsv)
+            --key-name "smoke-test"
+
+      - name: Wait for key creation
+        run: sleep 10
+
+      - name: Get function key
+        id: function_key
+        run: |
+          key=$(az functionapp function keys list \
+            --name "$FUNCTION_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --function-name "PostNotification" \
+            --query "smoke-test" -o tsv)
+
           if [ -z "$key" ]; then
-            echo "Function key was not created"
+            echo "Function key is empty"
             exit 1
           fi
-          echo "::add-mask::$key"
-          echo "key=$key" >> "$GITHUB_OUTPUT"
 
-      - name: Wait for deployment to warm up
-        run: sleep 30
+          echo "::add-mask::$key"
+          echo "key=$key" >> "$GITHUB_OUTPUT"  
 
       - name: Smoke test
         run: |
